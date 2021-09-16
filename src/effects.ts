@@ -9,6 +9,10 @@ if (process.env.NODE_ENV === 'development') {
   console.time(firstMountLogLabel);
 }
 
+/**
+ * TODO
+ * @param defaultAppLink
+ */
 export function setDefaultMountApp(defaultAppLink: string) {
   // can not use addEventListener once option for ie support
   window.addEventListener('single-spa:no-app-change', function listener() {
@@ -28,6 +32,10 @@ export function runDefaultMountEffects(defaultAppLink: string) {
   setDefaultMountApp(defaultAppLink);
 }
 
+/**
+ * TODO
+ * @param effect
+ */
 export function runAfterFirstMounted(effect: () => void) {
   // can not use addEventListener once option for ie support
   window.addEventListener('single-spa:first-mount', function listener() {

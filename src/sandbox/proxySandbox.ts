@@ -30,6 +30,7 @@ const variableWhiteListInDev =
       ]
     : [];
 // who could escape the sandbox
+// 跳过沙箱，直接操作主应用全局对象的属性白名单
 const variableWhiteList: PropertyKey[] = [
   // FIXME System.js used a indirect call with eval, which would make it scope escape to global
   // To make System.js works well, we write it back to global window temporary
@@ -64,7 +65,7 @@ type FakeWindow = Window & Record<PropertyKey, any>;
 function createFakeWindow(global: Window) {
   // map always has the fastest performance in has check scenario
   // see https://jsperf.com/array-indexof-vs-set-has/23
-  const propertiesWithGetter = new Map<PropertyKey, boolean>();
+  const propertiesWithGetter = new Map<PropertyKey, boolean>(); // 全局对象中有getter访问器的不可配置属性
   const fakeWindow = {} as FakeWindow;
 
   /*
@@ -72,15 +73,15 @@ function createFakeWindow(global: Window) {
    see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy/handler/getOwnPropertyDescriptor
    > A property cannot be reported as non-configurable, if it does not exists as an own property of the target object or if it exists as a configurable own property of the target object.
    */
-  Object.getOwnPropertyNames(global)
+  Object.getOwnPropertyNames(global) // 取全局对象的自有属性
     .filter((p) => {
-      const descriptor = Object.getOwnPropertyDescriptor(global, p);
-      return !descriptor?.configurable;
-    })
+      const descriptor = Object.getOwnPropertyDescriptor(global, p); // 取属性p的描述对象
+      return !descriptor?.configurable; // 过滤没有描述对象或不可修改配置的属性
+    }) // 此处为何要过滤，而非覆盖global的全部属性？当其他属性被修改时，才在伪全局对象中创建
     .forEach((p) => {
-      const descriptor = Object.getOwnPropertyDescriptor(global, p);
+      const descriptor = Object.getOwnPropertyDescriptor(global, p); // 取属性p的描述对象
       if (descriptor) {
-        const hasGetter = Object.prototype.hasOwnProperty.call(descriptor, 'get');
+        const hasGetter = Object.prototype.hasOwnProperty.call(descriptor, 'get'); // 属性p有getter访问器
 
         /*
          make top/self/window property configurable and writable, otherwise it will cause TypeError while get trap return.
@@ -94,7 +95,8 @@ function createFakeWindow(global: Window) {
           p === 'window' ||
           (process.env.NODE_ENV === 'test' && (p === 'mockTop' || p === 'mockSafariTop'))
         ) {
-          descriptor.configurable = true;
+          // 属性p是top parent self window mockTop mockSafariTop属性
+          descriptor.configurable = true; // 属性p可配置
           /*
            The descriptor of window.window/window.top/window.self in Safari/FF are accessor descriptors, we need to avoid adding a data descriptor while it was
            Example:
@@ -102,7 +104,8 @@ function createFakeWindow(global: Window) {
             Chrome: Object.getOwnPropertyDescriptor(window, 'top') -> {value: Window, writable: false, enumerable: true, configurable: false}
            */
           if (!hasGetter) {
-            descriptor.writable = true;
+            // 没有getter访问器
+            descriptor.writable = true; // 属性p可修改
           }
         }
 
@@ -110,7 +113,7 @@ function createFakeWindow(global: Window) {
 
         // freeze the descriptor to avoid being modified by zone.js
         // see https://github.com/angular/zone.js/blob/a5fe09b0fac27ac5df1fa746042f96f05ccb6a00/lib/browser/define-property.ts#L71
-        rawObjectDefineProperty(fakeWindow, p, Object.freeze(descriptor));
+        rawObjectDefineProperty(fakeWindow, p, Object.freeze(descriptor)); // 给fakeWindow添加属性p
       }
     });
 
@@ -120,26 +123,27 @@ function createFakeWindow(global: Window) {
   };
 }
 
-let activeSandboxCount = 0;
+let activeSandboxCount = 0; // 启动的沙箱实例计数器
 
 /**
  * 基于 Proxy 实现的沙箱
+ * 修改全局对象时，会把修改后的值放到伪全局对象中，在沙箱对象注销时，伪全局对象也会失效
  */
 export default class ProxySandbox implements SandBox {
   /** window 值变更记录 */
   private updatedValueSet = new Set<PropertyKey>();
 
-  name: string;
+  name: string; // 子应用名称
 
-  type: SandBoxType;
+  type: SandBoxType; // 沙箱类型
 
-  proxy: WindowProxy;
+  proxy: WindowProxy; // 全局对象的代理对象
 
   globalContext: typeof window;
 
-  sandboxRunning = true;
+  sandboxRunning = true; // 沙箱启动标志
 
-  latestSetProp: PropertyKey | null = null;
+  latestSetProp: PropertyKey | null = null; // 最后一次修改的全局对象中的属性
 
   private registerRunningApp(name: string, proxy: Window) {
     if (this.sandboxRunning) {
@@ -154,8 +158,8 @@ export default class ProxySandbox implements SandBox {
   }
 
   active() {
-    if (!this.sandboxRunning) activeSandboxCount++;
-    this.sandboxRunning = true;
+    if (!this.sandboxRunning) activeSandboxCount++; // 计数器加一
+    this.sandboxRunning = true; // 置沙箱启动标志
   }
 
   inactive() {
@@ -166,6 +170,7 @@ export default class ProxySandbox implements SandBox {
     }
 
     if (--activeSandboxCount === 0) {
+      // 计数器是否归零
       variableWhiteList.forEach((p) => {
         if (this.proxy.hasOwnProperty(p)) {
           // @ts-ignore
@@ -183,22 +188,29 @@ export default class ProxySandbox implements SandBox {
     this.type = SandBoxType.Proxy;
     const { updatedValueSet } = this;
 
-    const rawWindow = globalContext;
-    const { fakeWindow, propertiesWithGetter } = createFakeWindow(rawWindow);
+    const rawWindow = globalContext; // 主应用的全局对象
+    const { 
+      fakeWindow, // 伪全局对象
+      propertiesWithGetter // 全局对象中有getter访问器的不可配置属性
+    } = createFakeWindow(rawWindow); // 创建伪全局对象
 
     const descriptorTargetMap = new Map<PropertyKey, SymbolTarget>();
-    const hasOwnProperty = (key: PropertyKey) => fakeWindow.hasOwnProperty(key) || rawWindow.hasOwnProperty(key);
+    const hasOwnProperty = (key: PropertyKey) => fakeWindow.hasOwnProperty(key) || rawWindow.hasOwnProperty(key); // 伪全局对象或原始全局对象有属性key
 
+    // 创建代理对象
     const proxy = new Proxy(fakeWindow, {
       set: (target: FakeWindow, p: PropertyKey, value: any): boolean => {
-        if (this.sandboxRunning) {
+        if (this.sandboxRunning) { // 当前沙箱已启动
           this.registerRunningApp(name, proxy);
           // We must kept its description while the property existed in rawWindow before
           if (!target.hasOwnProperty(p) && rawWindow.hasOwnProperty(p)) {
-            const descriptor = Object.getOwnPropertyDescriptor(rawWindow, p);
+            // p属性，不在伪对象中，在原始全局对象中
+            const descriptor = Object.getOwnPropertyDescriptor(rawWindow, p); // 取属性p的描述对象
             const { writable, configurable, enumerable } = descriptor!;
             if (writable) {
+              // 可修改
               Object.defineProperty(target, p, {
+                // 在伪全局对象中添加属性p
                 configurable,
                 enumerable,
                 writable,
@@ -206,18 +218,20 @@ export default class ProxySandbox implements SandBox {
               });
             }
           } else {
+            // p属性为新属性，或已在伪全局对象中存在
             // @ts-ignore
-            target[p] = value;
+            target[p] = value; // 更新伪全局对象中的属性p的值
           }
 
           if (variableWhiteList.indexOf(p) !== -1) {
+            // 跳过代理的白名单属性
             // @ts-ignore
-            rawWindow[p] = value;
+            rawWindow[p] = value; // 更新原始全局对象中属性p的值
           }
 
-          updatedValueSet.add(p);
+          updatedValueSet.add(p); // 记录属性p发生变更
 
-          this.latestSetProp = p;
+          this.latestSetProp = p; // 更新最后一次修改的全局对象的属性
 
           return true;
         }
@@ -237,11 +251,13 @@ export default class ProxySandbox implements SandBox {
         // avoid who using window.window or window.self to escape the sandbox environment to touch the really window
         // see https://github.com/eligrey/FileSaver.js/blob/master/src/FileSaver.js#L13
         if (p === 'window' || p === 'self') {
+          // 将获取全局对象的属性指向代理对象本身
           return proxy;
         }
 
         // hijack globalWindow accessing with globalThis keyword
         if (p === 'globalThis') {
+          // 将获取全局对象的属性指向代理对象本身
           return proxy;
         }
 
@@ -252,6 +268,7 @@ export default class ProxySandbox implements SandBox {
         ) {
           // if your master app in an iframe context, allow these props escape the sandbox
           if (rawWindow === rawWindow.parent) {
+            // 将获取全局对象的属性指向代理对象本身
             return proxy;
           }
           return (rawWindow as any)[p];
@@ -259,6 +276,7 @@ export default class ProxySandbox implements SandBox {
 
         // proxy.hasOwnProperty would invoke getter firstly, then its value represented as rawWindow.hasOwnProperty
         if (p === 'hasOwnProperty') {
+          // hasOwnProperty方法特殊处理
           return hasOwnProperty;
         }
 
@@ -279,8 +297,8 @@ export default class ProxySandbox implements SandBox {
           ? (rawWindow as any)[p]
           : p in target
           ? (target as any)[p]
-          : (rawWindow as any)[p];
-        return getTargetValue(rawWindow, value);
+          : (rawWindow as any)[p]; // 取属性p的值
+        return getTargetValue(rawWindow, value); // value为函数的情况，绑定rawWindow为this TODO为什么要绑定this到原始全局对象
       },
 
       // trap in operator

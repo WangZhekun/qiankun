@@ -23,10 +23,10 @@ export { getCurrentRunningApp } from './common';
  *
  * 这么设计的目的是为了保证每个子应用切换回来之后，还能运行在应用 bootstrap 之后的环境下。
  *
- * @param appName
+ * @param appName 子应用名称
  * @param elementGetter
  * @param scopedCSS
- * @param useLooseSandbox
+ * @param useLooseSandbox 启用松散沙箱，即使用代理记录子应用的操作
  * @param excludeAssetFilter
  * @param globalContext
  */
@@ -40,9 +40,11 @@ export function createSandboxContainer(
 ) {
   let sandbox: SandBox;
   if (window.Proxy) {
-    sandbox = useLooseSandbox ? new LegacySandbox(appName, globalContext) : new ProxySandbox(appName, globalContext);
+    sandbox = useLooseSandbox 
+      ? new LegacySandbox(appName, globalContext) // 使用代理记录子应用的操作
+      : new ProxySandbox(appName, globalContext); // 使用代理，将子应用的修改代理到伪全局对象
   } else {
-    sandbox = new SnapshotSandbox(appName);
+    sandbox = new SnapshotSandbox(appName); // 创建/恢复window快照
   }
 
   // some side effect could be be invoked while bootstrapping, such as dynamic stylesheet injection with style-loader, especially during the development phase
@@ -53,7 +55,7 @@ export function createSandboxContainer(
   let sideEffectsRebuilders: Rebuilder[] = [];
 
   return {
-    instance: sandbox,
+    instance: sandbox, // 沙箱实例
 
     /**
      * 沙箱被 mount

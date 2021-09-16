@@ -19,6 +19,11 @@ function emitGlobal(state: Record<string, any>, prevState: Record<string, any>) 
   });
 }
 
+/**
+ * TODO
+ * @param state
+ * @returns
+ */
 export function initGlobalState(state: Record<string, any> = {}) {
   if (state === globalState) {
     console.warn('[qiankun] state has not changed！');

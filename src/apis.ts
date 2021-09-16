@@ -14,7 +14,7 @@ import { loadApp } from './loader';
 import { doPrefetchStrategy } from './prefetch';
 import { Deferred, getContainerXPath, toArray } from './utils';
 
-let microApps: Array<RegistrableApp<Record<string, unknown>>> = [];
+let microApps: Array<RegistrableApp<Record<string, unknown>>> = []; // 已注册微应用列表
 
 // eslint-disable-next-line import/no-mutable-exports
 export let frameworkConfiguration: FrameworkConfiguration = {};
@@ -43,35 +43,43 @@ const autoDowngradeForLowVersionBrowser = (configuration: FrameworkConfiguration
   return configuration;
 };
 
+/**
+ * 注册微应用
+ * @param apps 微应用配置列表
+ * @param lifeCycles 全局微应用生命周期
+ */
 export function registerMicroApps<T extends ObjectType>(
   apps: Array<RegistrableApp<T>>,
   lifeCycles?: FrameworkLifeCycles<T>,
 ) {
   // Each app only needs to be registered once
-  const unregisteredApps = apps.filter((app) => !microApps.some((registeredApp) => registeredApp.name === app.name));
+  const unregisteredApps = apps.filter((app) => !microApps.some((registeredApp) => registeredApp.name === app.name)); // 过滤未注册的微应用，避免重复注册，过滤依据：name
 
-  microApps = [...microApps, ...unregisteredApps];
+  microApps = [...microApps, ...unregisteredApps]; // 重组已注册微应用列表
 
+  // 遍历未注册微应用
   unregisteredApps.forEach((app) => {
     const { name, activeRule, loader = noop, props, ...appConfig } = app;
 
+    // 调用single-spa的api注册微应用
     registerApplication({
-      name,
+      name, // 待注册微应用name
       app: async () => {
-        loader(true);
+        loader(true); // loading 状态发生变化时会调用loader方法
         await frameworkStartedDefer.promise;
 
-        const { mount, ...otherMicroAppConfigs } = (
-          await loadApp({ name, props, ...appConfig }, frameworkConfiguration, lifeCycles)
-        )();
+        const {
+          mount, // 微应用挂载函数
+          ...otherMicroAppConfigs // 微应用其他配置
+        } = (await loadApp({ name, props, ...appConfig }, frameworkConfiguration, lifeCycles))(); // frameworkConfiguration是start api传入的。获取微应用生命周期配置对象的工厂函数 // 执行工厂函数
 
         return {
-          mount: [async () => loader(true), ...toArray(mount), async () => loader(false)],
+          mount: [async () => loader(true), ...toArray(mount), async () => loader(false)], // 挂载：打开loading、mount钩子、关闭loading三个过程的调用
           ...otherMicroAppConfigs,
         };
       },
-      activeWhen: activeRule,
-      customProps: props,
+      activeWhen: activeRule, // 微应用的激活规则，取值可为string、string[]、function、function[]
+      customProps: props, // 主应用需要传递给微应用的数据
     });
   });
 }
@@ -79,6 +87,13 @@ export function registerMicroApps<T extends ObjectType>(
 const appConfigPromiseGetterMap = new Map<string, Promise<ParcelConfigObjectGetter>>();
 const containerMicroAppsMap = new Map<string, MicroApp[]>();
 
+/**
+ * TODO
+ * @param app
+ * @param configuration
+ * @param lifeCycles
+ * @returns
+ */
 export function loadMicroApp<T extends ObjectType>(
   app: LoadableApp<T>,
   configuration?: FrameworkConfiguration,
@@ -194,6 +209,15 @@ export function loadMicroApp<T extends ObjectType>(
   return microApp;
 }
 
+/**
+ * TODO
+ * @param {Object} opts
+ * @param {boolean | ((app: RegistrableApp<any>) => Promise<boolean>);} opts.singular 是否为单实例场景，单实例指的是同一时间只会渲染一个微应用。默认：true
+ * @param {string => string} opts.getPublicPath 入参为子应用配置的entry，获取子应用资源的publicPath。
+ * 如果该配置不存在，则取getDomain配置项。
+ * 如果getDomain不存在，则根据entry和当前页面地址计算默认publicPath。详见import-html-entry的defaultGetPublicPath。
+ * @param {string => string} opts.getTemplate 对子应用的html处理前的钩子
+ */
 export function start(opts: FrameworkConfiguration = {}) {
   frameworkConfiguration = { prefetch: true, singular: true, sandbox: true, ...opts };
   const {

@@ -69,11 +69,12 @@ function createElement(
   scopedCSS: boolean,
   appName: string,
 ): HTMLElement {
-  const containerElement = document.createElement('div');
+  const containerElement = document.createElement('div'); // 子应用容器外的div
   containerElement.innerHTML = appContent;
   // appContent always wrapped with a singular div
-  const appElement = containerElement.firstChild as HTMLElement;
+  const appElement = containerElement.firstChild as HTMLElement; // 子应用容器
   if (strictStyleIsolation) {
+    // 开启严格的样式隔离模式，使用ShallowDOM
     if (!supportShadowDOM) {
       console.warn(
         '[qiankun]: As current browser not support shadow dom, your strictStyleIsolation configuration will be ignored!',
@@ -83,6 +84,7 @@ function createElement(
       appElement.innerHTML = '';
       let shadow: ShadowRoot;
 
+      // 创建shallow dom
       if (appElement.attachShadow) {
         shadow = appElement.attachShadow({ mode: 'open' });
       } else {
@@ -94,7 +96,8 @@ function createElement(
   }
 
   if (scopedCSS) {
-    const attr = appElement.getAttribute(css.QiankunCSSRewriteAttr);
+    // 启用沙箱，将子应用样式外添加子应用的容器的选择器
+    const attr = appElement.getAttribute(css.QiankunCSSRewriteAttr); // data-qiankun特性
     if (!attr) {
       appElement.setAttribute(css.QiankunCSSRewriteAttr, appName);
     }
@@ -241,13 +244,21 @@ let prevAppUnmountedDeferred: Deferred<void>;
 
 export type ParcelConfigObjectGetter = (remountContainer?: string | HTMLElement) => ParcelConfigObject;
 
+/**
+ * 加载微应用
+ * 获取微应用的生命周期配置对象的工厂函数
+ * @param app 微应用配置
+ * @param configuration 架构配置
+ * @param lifeCycles 全局微应用生命周期
+ * @returns
+ */
 export async function loadApp<T extends ObjectType>(
   app: LoadableApp<T>,
   configuration: FrameworkConfiguration = {},
   lifeCycles?: FrameworkLifeCycles<T>,
 ): Promise<ParcelConfigObjectGetter> {
-  const { entry, name: appName } = app;
-  const appInstanceId = `${appName}_${+new Date()}_${Math.floor(Math.random() * 1000)}`;
+  const { entry, name: appName } = app; // 取微应用的入口和name
+  const appInstanceId = `${appName}_${+new Date()}_${Math.floor(Math.random() * 1000)}`; // 创建微应用实例id
 
   const markName = `[qiankun] App ${appInstanceId} Loading`;
   if (process.env.NODE_ENV === 'development') {
@@ -255,35 +266,45 @@ export async function loadApp<T extends ObjectType>(
   }
 
   const {
-    singular = false,
-    sandbox = true,
-    excludeAssetFilter,
+    singular = false, // 是否为单实例场景，单实例指的是同一时间只会渲染一个微应用
+    sandbox = true, // 是否开启沙箱。开启时，沙箱可以确保单实例场景子应用之间的样式隔离，但是无法确保主应用跟子应用、或者多实例场景的子应用样式隔离
+    excludeAssetFilter, // 指定部分特殊的动态加载的微应用资源（css/js) 不被 qiankun 劫持处理。
     globalContext = window,
-    ...importEntryOpts
-  } = configuration;
+    ...importEntryOpts // 其他配置项
+  } = configuration; // 取架构配置
 
   // get the entry html content and script executor
-  const { template, execScripts, assetPublicPath } = await importEntry(entry, importEntryOpts);
+  const {
+    template, // 将外部css的内容插入到html之后的html
+    execScripts, // 函数，用于执行html中的js脚本，
+    // (proxy, strictGlobal, execScriptsHooks) => Promise
+    // proxy为全局对象，默认为window，
+    // strictGlobal为ture，使用proxy作为全局对象，否则使用window
+    // execScriptsHooks为对象，包含beforeExec和afterExec钩子，分别为脚本执行前和之后的钩子
+    assetPublicPath, // publicPath
+  } = await importEntry(entry, importEntryOpts);
 
   // as single-spa load and bootstrap new app parallel with other apps unmounting
   // (see https://github.com/CanopyTax/single-spa/blob/master/src/navigation/reroute.js#L74)
   // we need wait to load the app until all apps are finishing unmount in singular mode
   if (await validateSingularMode(singular, app)) {
+    // 是否为单例
     await (prevAppUnmountedDeferred && prevAppUnmountedDeferred.promise);
   }
 
-  const appContent = getDefaultTplWrapper(appInstanceId, appName)(template);
+  const appContent = getDefaultTplWrapper(appInstanceId, appName)(template); // 创建子应用容器（div）
 
-  const strictStyleIsolation = typeof sandbox === 'object' && !!sandbox.strictStyleIsolation;
-  const scopedCSS = isEnableScopedCSS(sandbox);
+  const strictStyleIsolation = typeof sandbox === 'object' && !!sandbox.strictStyleIsolation; // 开启严格的样式隔离模式，使用Shallow DOM
+  const scopedCSS = isEnableScopedCSS(sandbox); // experimentalStyleIsolation为true，启用严格样式隔离，即使用子应用容器选择器包裹子应用样式
   let initialAppWrapperElement: HTMLElement | null = createElement(
+    // 创建子应用节点的容器节点
     appContent,
     strictStyleIsolation,
     scopedCSS,
     appName,
   );
 
-  const initialContainer = 'container' in app ? app.container : undefined;
+  const initialContainer = 'container' in app ? app.container : undefined; // 子应用在父应用中的容器
   const legacyRender = 'render' in app ? app.render : undefined;
 
   const render = getRender(appName, appContent, legacyRender);
@@ -304,7 +325,7 @@ export async function loadApp<T extends ObjectType>(
   let global = globalContext;
   let mountSandbox = () => Promise.resolve();
   let unmountSandbox = () => Promise.resolve();
-  const useLooseSandbox = typeof sandbox === 'object' && !!sandbox.loose;
+  const useLooseSandbox = typeof sandbox === 'object' && !!sandbox.loose; // 松散沙箱
   let sandboxContainer;
   if (sandbox) {
     sandboxContainer = createSandboxContainer(
@@ -333,8 +354,9 @@ export async function loadApp<T extends ObjectType>(
   await execHooksChain(toArray(beforeLoad), app, global);
 
   // get the lifecycle hooks from module exports
-  const scriptExports: any = await execScripts(global, sandbox && !useLooseSandbox);
+  const scriptExports: any = await execScripts(global, sandbox && !useLooseSandbox); // 执行子应用脚本。松散沙箱，使用window作为全局对象
   const { bootstrap, mount, unmount, update } = getLifecyclesFromExports(
+    // 获取子应用的钩子
     scriptExports,
     appName,
     global,

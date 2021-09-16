@@ -71,6 +71,12 @@ function prefetchAfterFirstMounted(apps: AppMetadata[], opts?: ImportEntryOpts):
   });
 }
 
+/**
+ * TODO
+ * 作为prefetchApps api被导出
+ * @param apps
+ * @param opts
+ */
 export function prefetchImmediately(apps: AppMetadata[], opts?: ImportEntryOpts): void {
   if (process.env.NODE_ENV === 'development') {
     console.log('[qiankun] prefetch starting for apps...', apps);

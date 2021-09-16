@@ -13,6 +13,8 @@ function isPropConfigurable(target: WindowProxy, prop: PropertyKey) {
 
 /**
  * 基于 Proxy 实现的沙箱
+ * 使用代理对象，记录沙箱对全局对象的修改，在沙箱停止或运行时，对全局对象进行恢复。
+ * 问题：在子应用修改window的属性p之后，主应用也修改window的属性p之后，记录的属性p的原始值仍然是沙箱创建时的值
  * TODO: 为了兼容性 singular 模式下依旧使用该沙箱，等新沙箱稳定之后再切换
  */
 export default class LegacySandbox implements SandBox {
@@ -25,18 +27,24 @@ export default class LegacySandbox implements SandBox {
   /** 持续记录更新的(新增和修改的)全局变量的 map，用于在任意时刻做 snapshot */
   private currentUpdatedPropsValueMap = new Map<PropertyKey, any>();
 
-  name: string;
+  name: string; // 子应用名称
 
-  proxy: WindowProxy;
+  proxy: WindowProxy; // 全局对象的代理对象
 
   globalContext: typeof window;
 
-  type: SandBoxType;
+  type: SandBoxType; // 沙箱类型
 
-  sandboxRunning = true;
+  sandboxRunning = true; // 沙箱启动标志
 
-  latestSetProp: PropertyKey | null = null;
+  latestSetProp: PropertyKey | null = null; // 最后一次修改的全局对象中的属性
 
+  /**
+   * 设置window的属性
+   * @param prop 属性
+   * @param value 属性值
+   * @param toDelete 删除标志
+   */
   private setWindowProp(prop: PropertyKey, value: any, toDelete?: boolean) {
     if (value === undefined && toDelete) {
       // eslint-disable-next-line no-param-reassign
@@ -50,7 +58,7 @@ export default class LegacySandbox implements SandBox {
 
   active() {
     if (!this.sandboxRunning) {
-      this.currentUpdatedPropsValueMap.forEach((v, p) => this.setWindowProp(p, v));
+      this.currentUpdatedPropsValueMap.forEach((v, p) => this.setWindowProp(p, v)); // 恢复沙箱对window的修改
     }
 
     this.sandboxRunning = true;
@@ -66,8 +74,8 @@ export default class LegacySandbox implements SandBox {
 
     // renderSandboxSnapshot = snapshot(currentUpdatedPropsValueMapForSnapshot);
     // restore global props to initial snapshot
-    this.modifiedPropsOriginalValueMapInSandbox.forEach((v, p) => this.setWindowProp(p, v));
-    this.addedPropsMapInSandbox.forEach((_, p) => this.setWindowProp(p, undefined, true));
+    this.modifiedPropsOriginalValueMapInSandbox.forEach((v, p) => this.setWindowProp(p, v)); // 恢复沙箱运行期间修改的window的属性
+    this.addedPropsMapInSandbox.forEach((_, p) => this.setWindowProp(p, undefined, true)); // 去掉沙箱运行期间向window新增的属性
 
     this.sandboxRunning = false;
   }
@@ -76,7 +84,11 @@ export default class LegacySandbox implements SandBox {
     this.name = name;
     this.globalContext = globalContext;
     this.type = SandBoxType.LegacyProxy;
-    const { addedPropsMapInSandbox, modifiedPropsOriginalValueMapInSandbox, currentUpdatedPropsValueMap } = this;
+    const {
+      addedPropsMapInSandbox, // 新增的属性
+      modifiedPropsOriginalValueMapInSandbox, // 修改的属性的原始值
+      currentUpdatedPropsValueMap, // 更新的属性
+    } = this;
 
     const rawWindow = globalContext;
     const fakeWindow = Object.create(null) as Window;
@@ -84,15 +96,17 @@ export default class LegacySandbox implements SandBox {
     const setTrap = (p: PropertyKey, value: any, originalValue: any, sync2Window = true) => {
       if (this.sandboxRunning) {
         if (!rawWindow.hasOwnProperty(p)) {
+          // 原始全局对象中不包含p属性
           addedPropsMapInSandbox.set(p, value);
         } else if (!modifiedPropsOriginalValueMapInSandbox.has(p)) {
           // 如果当前 window 对象存在该属性，且 record map 中未记录过，则记录该属性初始值
           modifiedPropsOriginalValueMapInSandbox.set(p, originalValue);
         }
 
-        currentUpdatedPropsValueMap.set(p, value);
+        currentUpdatedPropsValueMap.set(p, value); // 将p记录为更新的属性
 
         if (sync2Window) {
+          // 同步到window
           // 必须重新设置 window 对象保证下次 get 时能拿到已更新的数据
           (rawWindow as any)[p] = value;
         }
@@ -113,7 +127,7 @@ export default class LegacySandbox implements SandBox {
     const proxy = new Proxy(fakeWindow, {
       set: (_: Window, p: PropertyKey, value: any): boolean => {
         const originalValue = (rawWindow as any)[p];
-        return setTrap(p, value, originalValue, true);
+        return setTrap(p, value, originalValue, true); // 记录属性p，更新属性p的值
       },
 
       get(_: Window, p: PropertyKey): any {
@@ -124,7 +138,7 @@ export default class LegacySandbox implements SandBox {
           return proxy;
         }
 
-        const value = (rawWindow as any)[p];
+        const value = (rawWindow as any)[p]; // 获取原始全局对象中的p属性的值
         return getTargetValue(rawWindow, value);
       },
 
